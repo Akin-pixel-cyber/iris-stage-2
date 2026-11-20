@@ -1,0 +1,12 @@
+# Litestream copies every change to the Iris database to S3, about once per second.
+# ${...} values come from .env (docker compose passes them in).
+dbs:
+  - path: /data/iris.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: iris/db
+        region: ${LITESTREAM_REGION}
+        sync-interval: 1s        # how often new changes are copied (this is how little you can lose)
+        snapshot-interval: 24h   # a full copy once a day, so restores are fast
+        retention: 720h          # keep 30 days of history (point-in-time restore)

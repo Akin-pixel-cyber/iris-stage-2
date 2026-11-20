@@ -1,0 +1,46 @@
+name: iris                # fixed project name
+services:
+  iris:
+    build: .
+    container_name: iris
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"          # host:container. Open this port in the AWS security group.
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data   # database + profile pictures, on the host (the separate data disk in production)
+
+  # ---- Backups (only start when COMPOSE_PROFILES=backup is set in .env) ----
+  litestream:
+    profiles: ["backup"]
+    image: litestream/litestream:0.3.13
+    container_name: iris-litestream
+    restart: unless-stopped
+    command: replicate -config /etc/litestream.yml
+    environment:
+      LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:-}
+      LITESTREAM_REGION: ${LITESTREAM_REGION:-}
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ./litestream/litestream.yml:/etc/litestream.yml:ro
+    depends_on:
+      - iris
+
+  uploads-sync:
+    profiles: ["backup"]
+    image: amazon/aws-cli:latest
+    container_name: iris-uploads-sync
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    # Every hour, copy new profile pictures to S3. No --delete: a picture removed here stays in the backup.
+    command:
+      - |
+        while true; do
+          if [ -d /data/uploads ]; then aws s3 sync /data/uploads s3://${LITESTREAM_BUCKET}/uploads --region ${LITESTREAM_REGION} --only-show-errors || echo "uploads sync failed, will retry"; fi
+          sleep 3600
+        done
+    environment:
+      LITESTREAM_BUCKET: ${LITESTREAM_BUCKET:-}
+      LITESTREAM_REGION: ${LITESTREAM_REGION:-}
+    volumes:
+      - ${DATA_DIR:-./data}:/data:ro
